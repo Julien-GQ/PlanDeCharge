@@ -1,0 +1,136 @@
+{
+    "profile": "parametre_1",
+    "description": "Filtrage ANNOEULL avec OF en cours et mise en forme V1",
+    "expected_columns": [
+        "DATECDE",
+        "DT_LIV_CONFIRMEE",
+        "COMMANDE",
+        "NOMREDCLI_CDE",
+        "CODE2",
+        "DESIGNATION",
+        "RESTE_A_LIV_UV",
+        "MOR_ATELIER",
+        "CAPREV_LCDE",
+        "PXVENTE",
+        "FAM_VENTE",
+        "MOR_OF",
+        "OF_LANCE",
+        "MOR_60EMB",
+        "OF_SOLDFAB",
+        "CPAYS_CDE",
+        "ARTICLE"
+    ],
+    "computed_columns": {
+        "SEMAINE": {
+            "source": "DT_LIV_CONFIRMEE",
+            "transform": "iso_week"
+        },
+        "TYPE": {
+            "source": "DESIGNATION",
+            "transform": "first_word"
+        }
+    },
+    "filters": [
+        {
+            "column": "MOR_ATELIER",
+            "operator": "equals",
+            "value": "ANNOEULL"
+        },
+        {
+            "column": "MOR_OF",
+            "operator": "not_empty"
+        },
+        {
+            "column": "OF_SOLDFAB",
+            "operator": "not_equals",
+            "value": "O",
+            "allow_empty": true
+        }
+    ],
+    "output": {
+        "sheet_name": "V1_ANNOEULL",
+        "column_order": [
+            "SEMAINE",
+            "DT_LIV_CONFIRMEE",
+            "MOR_OF",
+            "NOMREDCLI_CDE",
+            "RESTE_A_LIV_UV",
+            "ARTICLE",
+            "DESIGNATION",
+            "TYPE",
+            "CPAYS_CDE"
+        ],
+        "drop_columns": [
+            "OF_LANCE",
+            "DATECDE",
+            "COMMANDE",
+            "CODE2",
+            "MOR_ATELIER",
+            "CAPREV_LCDE",
+            "PXVENTE",
+            "FAM_VENTE",
+            "MOR_10PREC",
+            "MOR_20COUPE",
+            "MOR_30RENF",
+            "MOR_40CONF",
+            "MOR_50RETCOU",
+            "MOR_60EMB",
+            "OF_SOLDFAB"
+        ],
+        "column_format": {
+            "SEMAINE": {
+                "width": 5,
+                "align": "center",
+                "bold": true,
+                "font_size": 11
+            },
+            "DT_LIV_CONFIRMEE": {
+                "width": 12,
+                "align": "center",
+                "bold": false,
+                "font_size": 11,
+                "date_without_time": true
+            },
+            "MOR_OF": {
+                "align": "center",
+                "bold": true,
+                "font_size": 11
+            },
+            "NOMREDCLI_CDE": {
+                "width": 20,
+                "align": "left",
+                "bold": false,
+                "font_size": 9
+            },
+            "RESTE_A_LIV_UV": {
+                "width": 5,
+                "align": "center",
+                "bold": true,
+                "font_size": 11
+            },
+            "ARTICLE": {
+                "width": 10,
+                "align": "center",
+                "bold": true,
+                "font_size": 11
+            },
+            "DESIGNATION": {
+                "width": 60,
+                "align": "left",
+                "bold": false,
+                "font_size": 9
+            },
+            "TYPE": {
+                "width": 10,
+                "align": "center",
+                "bold": true,
+                "font_size": 11
+            },
+            "CPAYS_CDE": {
+                "align": "center",
+                "bold": false,
+                "font_size": 11
+            }
+        }
+    }
+}
