@@ -429,6 +429,160 @@ def _write_weekly_summary_sheet(
             table_name="TableChargeWillmark",
         )
 
+def _write_retard_sheet(
+    workbook: Any,
+    sheet_name: str,
+    transformed_rows: list[dict[str, Any]],
+    columns: list[str],
+    column_format: dict[str, dict[str, Any]],
+) -> None:
+    """Cree la feuille Retard avec synthese hebdo et details OF."""
+    current_iso = date.today().isocalendar()
+    current_week_key = (current_iso.year, current_iso.week)
+
+    if sheet_name in workbook.sheetnames:
+        del workbook[sheet_name]
+
+    sheet = workbook.create_sheet(sheet_name)
+
+    retard_rows: list[dict[str, Any]] = []
+    for row in transformed_rows:
+        week_key = _week_key(row)
+        if week_key is not None and week_key < current_week_key:
+            retard_rows.append(row)
+
+    black_border = Border(
+        left=Side(style="thin", color="FF000000"),
+        right=Side(style="thin", color="FF000000"),
+        top=Side(style="thin", color="FF000000"),
+        bottom=Side(style="thin", color="FF000000"),
+    )
+    header_fill = PatternFill(fill_type="solid", fgColor="FF404040")
+
+    # Bloc gauche: S / M / P / A par semaine + ligne TT
+    for col_idx, label in enumerate(["S", "M", "P", "A"], start=1):
+        cell = sheet.cell(1, col_idx, label)
+        cell.font = Font(bold=True, size=11, color="FFFFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = black_border
+        sheet.column_dimensions[get_column_letter(col_idx)].width = 8
+
+    sheet.row_dimensions[1].height = 20
+
+    week_matrix: dict[tuple[int, int], dict[str, float]] = defaultdict(
+        lambda: {"M": 0.0, "P": 0.0, "A": 0.0}
+    )
+    for row in retard_rows:
+        week_key = _week_key(row)
+        if week_key is None:
+            continue
+        qty = _parse_quantity(row.get("RESTE_A_LIV_UV"))
+        type_name = _normalize_text(row.get("TYPE")).upper()
+        if type_name.startswith("MANCHE"):
+            week_matrix[week_key]["M"] += qty
+        elif type_name.startswith("POCHE"):
+            week_matrix[week_key]["P"] += qty
+        else:
+            week_matrix[week_key]["A"] += qty
+
+    ordered_weeks = sorted(week_matrix.keys())
+    row_idx = 2
+    total_m = 0.0
+    total_p = 0.0
+    total_a = 0.0
+
+    for week in ordered_weeks:
+        m_value = week_matrix[week]["M"]
+        p_value = week_matrix[week]["P"]
+        a_value = week_matrix[week]["A"]
+        total_m += m_value
+        total_p += p_value
+        total_a += a_value
+
+        values = [
+            _week_label(week),
+            int(round(m_value)) if m_value > 0 else "",
+            int(round(p_value)) if p_value > 0 else "",
+            int(round(a_value)) if a_value > 0 else "",
+        ]
+        for col_idx, value in enumerate(values, start=1):
+            cell = sheet.cell(row_idx, col_idx, value)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = black_border
+        row_idx += 1
+
+    tt_row = row_idx
+    tt_fill = PatternFill(fill_type="solid", fgColor="FFC0C0C0")
+    tt_values = ["TT", int(round(total_m)), int(round(total_p)), int(round(total_a))]
+    for col_idx, value in enumerate(tt_values, start=1):
+        cell = sheet.cell(tt_row, col_idx, value)
+        cell.font = Font(bold=True, size=11)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = black_border
+        cell.fill = tt_fill
+
+    # Colonne de separation
+    sheet.column_dimensions[get_column_letter(5)].width = 3
+
+    # Bloc droite: details OF retard en conservant la mise en page de Global
+    details_start_col = 6
+    for offset, col_name in enumerate(columns):
+        target_col = details_start_col + offset
+        sheet.cell(1, target_col, col_name)
+
+    for data_row_idx, row in enumerate(retard_rows, start=2):
+        for offset, col_name in enumerate(columns):
+            target_col = details_start_col + offset
+            sheet.cell(
+                data_row_idx,
+                target_col,
+                _format_cell_value(col_name, row.get(col_name, ""), column_format),
+            )
+
+    details_end_row = max(1, len(retard_rows) + 1)
+    if columns:
+        details_end_col = details_start_col + len(columns) - 1
+        table_ref = f"{get_column_letter(details_start_col)}1:{get_column_letter(details_end_col)}{details_end_row}"
+        table = Table(displayName="TableRetardOF", ref=table_ref)
+        table.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium2",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False,
+        )
+        sheet.add_table(table)
+
+    for offset, col_name in enumerate(columns):
+        target_col = details_start_col + offset
+        fmt = column_format.get(col_name, {})
+
+        width = fmt.get("width")
+        if width is not None:
+            sheet.column_dimensions[get_column_letter(target_col)].width = float(width)
+
+        align_value = str(fmt.get("align", "")).lower()
+        horizontal = None
+        if align_value in {"center", "centre"}:
+            horizontal = "center"
+        elif align_value in {"left", "gauche"}:
+            horizontal = "left"
+
+        bold = bool(fmt.get("bold", False))
+        font_size = fmt.get("font_size")
+        font_size_value = float(font_size) if font_size is not None else None
+
+        for row_idx in range(1, details_end_row + 1):
+            cell = sheet.cell(row_idx, target_col)
+            if horizontal:
+                cell.alignment = Alignment(horizontal=horizontal, vertical="center")
+            else:
+                cell.alignment = Alignment(vertical="center")
+            if bold or font_size_value is not None:
+                cell.font = Font(bold=bold, size=font_size_value)
+            cell.border = black_border
+
 
 def _week_sort_key(row: dict[str, Any]) -> tuple[int, int, int, date]:
     week_raw = row.get("SEMAINE", "")
@@ -513,6 +667,8 @@ def _write_output(
 
     if create_weekly_summary:
         _write_weekly_summary_sheet(workbook, summary_sheet_name, rows)
+    
+    _write_retard_sheet(workbook, "Retard", rows, columns, column_format)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)

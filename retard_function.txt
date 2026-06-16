@@ -1,0 +1,91 @@
+def _write_retard_sheet(
+    workbook: Any,
+    sheet_name: str,
+    transformed_rows: list[dict[str, Any]],
+    columns: list[str],
+) -> None:
+    """Crée la feuille Retard avec résumé par type et détails des OF en retard."""
+    from openpyxl.styles import Border, Side
+    
+    current_iso = date.today().isocalendar()
+    current_week_key = (current_iso.year, current_iso.week)
+    
+    if sheet_name in workbook.sheetnames:
+        del workbook[sheet_name]
+    
+    sheet = workbook.create_sheet(sheet_name)
+    
+    # Filtrer les lignes en retard (semaine < current_week)
+    retard_rows = []
+    for row in transformed_rows:
+        week_key = _week_key(row)
+        if week_key and week_key < current_week_key:
+            retard_rows.append(row)
+    
+    if not retard_rows:
+        return  # Rien à afficher
+    
+    yellow_pale = PatternFill(fill_type="solid", fgColor="FFFFF8DC")
+    black_border = Border(
+        left=Side(style="thin", color="FF000000"),
+        right=Side(style="thin", color="FF000000"),
+        top=Side(style="thin", color="FF000000"),
+        bottom=Side(style="thin", color="FF000000"),
+    )
+    
+    # Compter par type
+    summary_data = {"MANCHE": 0, "POCHE": 0, "AUTRES": 0}
+    
+    for row in retard_rows:
+        type_name = _normalize_text(row.get("TYPE")).upper()
+        if type_name.startswith("MANCHE"):
+            summary_data["MANCHE"] += 1
+        elif type_name.startswith("POCHE"):
+            summary_data["POCHE"] += 1
+        else:
+            summary_data["AUTRES"] += 1
+    
+    # Écrire le résumé
+    sheet.cell(1, 1, "Type")
+    sheet.cell(1, 2, "Nombre")
+    sheet.cell(1, 1).font = Font(bold=True, size=11, color="FFFFFFFF")
+    sheet.cell(1, 2).font = Font(bold=True, size=11, color="FFFFFFFF")
+    sheet.cell(1, 1).fill = PatternFill(fill_type="solid", fgColor="FF404040")
+    sheet.cell(1, 2).fill = PatternFill(fill_type="solid", fgColor="FF404040")
+    sheet.row_dimensions[1].height = 20
+    
+    row_idx = 2
+    for cat in ["MANCHE", "POCHE", "AUTRES"]:
+        sheet.cell(row_idx, 1, cat)
+        sheet.cell(row_idx, 2, summary_data[cat])
+        
+        for col_idx in [1, 2]:
+            cell = sheet.cell(row_idx, col_idx)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = black_border
+            cell.fill = yellow_pale
+        
+        row_idx += 1
+    
+    # Appliquer bordures au header
+    for col_idx in [1, 2]:
+        sheet.cell(1, col_idx).border = black_border
+        sheet.cell(1, col_idx).alignment = Alignment(horizontal="center", vertical="center")
+    
+    sheet.column_dimensions["A"].width = 15
+    sheet.column_dimensions["B"].width = 12
+    
+    # Sauter quelques lignes
+    details_start_row = row_idx + 2
+    
+    # En-tête des détails
+    for col_idx, col_name in enumerate(columns, start=1):
+        sheet.cell(details_start_row, col_idx, col_name)
+        sheet.cell(details_start_row, col_idx).font = Font(bold=True)
+    
+    # Données détaillées
+    for data_row_idx, row in enumerate(retard_rows, start=details_start_row + 1):
+        for col_idx, col_name in enumerate(columns, start=1):
+            sheet.cell(data_row_idx, col_idx, row.get(col_name, ""))
+
+
