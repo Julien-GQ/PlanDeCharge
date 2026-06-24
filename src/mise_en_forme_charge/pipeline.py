@@ -15,6 +15,11 @@ from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
+try:
+    from .ca_sheet import write_ca_sheet
+except ImportError:
+    from ca_sheet import write_ca_sheet
+
 
 @dataclass
 class TransformResult:
@@ -86,7 +91,7 @@ def _parse_profile(path: Path) -> Profile:
         create_excel_table=bool(output.get("create_excel_table", True)),
         sort_by_week=bool(output.get("sort_by_week", True)),
         create_weekly_summary=bool(output.get("create_weekly_summary", True)),
-        summary_sheet_name=str(output.get("summary_sheet_name", "CHARGE_HEBDO")),
+        summary_sheet_name=str(output.get("summary_sheet_name", "Charge")),
     )
 
 
@@ -123,6 +128,10 @@ def _read_rows(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
 
     workbook = load_workbook(path, read_only=True, data_only=True, keep_vba=(suffix == ".xlsm"))
     sheet = workbook.active
+    for candidate in workbook.worksheets:
+        if candidate.title.upper().startswith("DELAI_FAB_M"):
+            sheet = candidate
+            break
     values = sheet.iter_rows(values_only=True)
     first_row = next(values, None)
     if first_row is None:
@@ -234,6 +243,22 @@ def _parse_quantity(value: Any) -> float:
         return float(text)
     except ValueError:
         return 0.0
+
+
+def _is_ca_source_row(row: dict[str, Any]) -> bool:
+    atelier = _normalize_text(row.get("MOR_ATELIER")).upper()
+    if atelier != "ANNOEULL":
+        return False
+
+    client = _normalize_text(row.get("NOMREDCLI_CDE")).upper()
+    if client in {"MORTELECQUE", "WILLMARK", "F-WILLMARK"}:
+        return False
+
+    fam_vente = _normalize_text(row.get("FAM_VENTE")).upper()
+    if fam_vente in {"VTENEGG", "VTENEGLI"}:
+        return False
+
+    return True
 
 
 def _type_sort_key(type_name: str) -> tuple[int, str]:
@@ -429,6 +454,10 @@ def _write_weekly_summary_sheet(
             table_name="TableChargeWillmark",
         )
 
+        _apply_print_layout(stock_sheet)
+
+    _apply_print_layout(sheet)
+
 def _write_retard_sheet(
     workbook: Any,
     sheet_name: str,
@@ -448,7 +477,8 @@ def _write_retard_sheet(
     retard_rows: list[dict[str, Any]] = []
     for row in transformed_rows:
         week_key = _week_key(row)
-        if week_key is not None and week_key < current_week_key:
+        client_name = _normalize_text(row.get("NOMREDCLI_CDE")).upper()
+        if week_key is not None and week_key < current_week_key and "WILLMARK" not in client_name:
             retard_rows.append(row)
 
     black_border = Border(
@@ -583,6 +613,8 @@ def _write_retard_sheet(
                 cell.font = Font(bold=bold, size=font_size_value)
             cell.border = black_border
 
+    _apply_print_layout(sheet)
+
 
 def _week_sort_key(row: dict[str, Any]) -> tuple[int, int, int, date]:
     week_raw = row.get("SEMAINE", "")
@@ -623,12 +655,143 @@ def _apply_sheet_format(sheet: Any, columns: list[str], column_format: dict[str,
                 cell.font = Font(bold=bold, size=font_size_value)
 
 
+def _apply_print_layout(sheet: Any) -> None:
+    # Mise en page orientee export PDF: 1 page en largeur, hauteur libre.
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.paperSize = 9  # A4
+    sheet.page_setup.fitToPage = True
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
+    sheet.print_title_rows = "1:1"
+
+
+def _write_like_global_sheet(
+    workbook: Any,
+    sheet_name: str,
+    columns: list[str],
+    rows: list[dict[str, Any]],
+    column_format: dict[str, dict[str, Any]],
+    create_excel_table: bool,
+) -> None:
+    if sheet_name in workbook.sheetnames:
+        del workbook[sheet_name]
+
+    sheet = workbook.create_sheet(sheet_name)
+    sheet.append(columns)
+    for row in rows:
+        sheet.append([_format_cell_value(col, row.get(col, ""), column_format) for col in columns])
+
+    if create_excel_table and sheet.max_row >= 2 and sheet.max_column >= 1:
+        table_name = f"Table_{sheet_name}".replace(" ", "_").replace("-", "_")
+        table_ref = f"A1:{get_column_letter(sheet.max_column)}{sheet.max_row}"
+        table = Table(displayName=table_name[:31], ref=table_ref)
+        table.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium2",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False,
+        )
+        sheet.add_table(table)
+
+    _apply_sheet_format(sheet, columns, column_format)
+    _apply_print_layout(sheet)
+
+
+def _write_current_week_charge_sheets(
+    workbook: Any,
+    columns: list[str],
+    rows: list[dict[str, Any]],
+    column_format: dict[str, dict[str, Any]],
+    create_excel_table: bool,
+) -> None:
+    current_iso = date.today().isocalendar()
+    current_week_key = (current_iso.year, current_iso.week)
+
+    current_week_rows = [row for row in rows if _week_key(row) == current_week_key]
+
+    manches_rows: list[dict[str, Any]] = []
+    poches_rows: list[dict[str, Any]] = []
+    autres_rows: list[dict[str, Any]] = []
+
+    for row in current_week_rows:
+        type_name = _normalize_text(row.get("TYPE")).upper()
+        if type_name.startswith("MANCHE"):
+            manches_rows.append(row)
+        elif type_name.startswith("POCHE"):
+            poches_rows.append(row)
+        else:
+            autres_rows.append(row)
+
+    _write_like_global_sheet(
+        workbook,
+        "S0_Manche",
+        columns,
+        manches_rows,
+        column_format,
+        create_excel_table,
+    )
+    _write_like_global_sheet(
+        workbook,
+        "S0_Poche",
+        columns,
+        poches_rows,
+        column_format,
+        create_excel_table,
+    )
+    _write_like_global_sheet(
+        workbook,
+        "S0_Autre",
+        columns,
+        autres_rows,
+        column_format,
+        create_excel_table,
+    )
+
+
+def _write_home_sheet(workbook: Any, sheet_names: list[str]) -> None:
+    home_name = "Home"
+    if home_name in workbook.sheetnames:
+        del workbook[home_name]
+
+    sheet = workbook.create_sheet(home_name, 0)
+    pale_blue = PatternFill(fill_type="solid", fgColor="FFDDEBF7")
+    title_font = Font(bold=True, size=16, color="FF1F4E78")
+    link_font = Font(bold=True, size=12, color="FF0563C1", underline="single")
+
+    for row_idx in range(1, 40):
+        for col_idx in range(1, 6):
+            cell = sheet.cell(row_idx, col_idx)
+            cell.fill = pale_blue
+
+    sheet.column_dimensions["A"].width = 6
+    sheet.column_dimensions["B"].width = 40
+    sheet.column_dimensions["C"].width = 18
+
+    sheet.cell(2, 2, "Accueil - Navigation Classeur").font = title_font
+    sheet.cell(4, 2, "Cliquez sur une page:").font = Font(bold=True, size=11, color="FF1F4E78")
+
+    row_idx = 6
+    for name in sheet_names:
+        if name not in workbook.sheetnames:
+            continue
+        link_cell = sheet.cell(row_idx, 2, name)
+        link_cell.hyperlink = f"#{name}!A1"
+        link_cell.font = link_font
+        link_cell.alignment = Alignment(horizontal="left", vertical="center")
+        row_idx += 1
+
+    _apply_print_layout(sheet)
+
+
 def _write_output(
     input_path: Path,
     output_path: Path,
     output_sheet: str,
     columns: list[str],
     rows: list[dict[str, Any]],
+    source_columns: list[str],
+    source_rows: list[dict[str, Any]],
     column_format: dict[str, dict[str, Any]],
     create_excel_table: bool,
     create_weekly_summary: bool,
@@ -642,33 +805,49 @@ def _write_output(
         workbook = Workbook()
         workbook.remove(workbook.active)
 
-    if output_sheet in workbook.sheetnames:
-        del workbook[output_sheet]
+    # Nettoie les anciens noms de feuilles pour garder un classeur lisible.
+    obsolete_sheets = [
+        "Charge_Global",
+        "CHARGE_HEBDO",
+        "Charge_Semaine_Manches",
+        "Charge_Semaine_Poches",
+        "Charge_Semaine_Autres",
+    ]
+    for old_name in obsolete_sheets:
+        if old_name in workbook.sheetnames:
+            del workbook[old_name]
 
-    sheet = workbook.create_sheet(output_sheet)
-    sheet.append(columns)
-    for row in rows:
-        sheet.append([_format_cell_value(col, row.get(col, ""), column_format) for col in columns])
-
-    if create_excel_table and sheet.max_row >= 1 and sheet.max_column >= 1:
-        table_name = f"Table_{output_sheet}".replace(" ", "_").replace("-", "_")
-        table_ref = f"A1:{get_column_letter(sheet.max_column)}{sheet.max_row}"
-        table = Table(displayName=table_name[:31], ref=table_ref)
-        table.tableStyleInfo = TableStyleInfo(
-            name="TableStyleMedium2",
-            showFirstColumn=False,
-            showLastColumn=False,
-            showRowStripes=True,
-            showColumnStripes=False,
-        )
-        sheet.add_table(table)
-
-    _apply_sheet_format(sheet, columns, column_format)
+    _write_like_global_sheet(workbook, output_sheet, columns, rows, column_format, create_excel_table)
 
     if create_weekly_summary:
         _write_weekly_summary_sheet(workbook, summary_sheet_name, rows)
+
+    rows_ca = [row for row in source_rows if _is_ca_source_row(row)]
+    write_ca_sheet(workbook, "CA", rows_ca)
+    _write_like_global_sheet(
+        workbook,
+        "CA_details",
+        source_columns,
+        rows_ca,
+        {},
+        create_excel_table,
+    )
     
     _write_retard_sheet(workbook, "Retard", rows, columns, column_format)
+    _write_current_week_charge_sheets(workbook, columns, rows, column_format, create_excel_table)
+
+    home_targets = [
+        output_sheet,
+        summary_sheet_name,
+        "CA",
+        "CA_details",
+        "CMD_STOCK",
+        "Retard",
+        "S0_Manche",
+        "S0_Poche",
+        "S0_Autre",
+    ]
+    _write_home_sheet(workbook, home_targets)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)
@@ -715,6 +894,8 @@ def build_v1_sheet(
         sheet_name,
         columns,
         transformed_rows,
+        headers,
+        rows,
         profile.column_format,
         profile.create_excel_table,
         profile.create_weekly_summary,

@@ -115,4 +115,4 @@ def test_parse_profile_1_json() -> None:
     profile = _parse_profile(Path("parametre/profile_1.json"))
     assert profile.name == "parametre_1"
     assert "DT_LIV_CONFIRMEE" in profile.expected_columns
-    assert profile.output_sheet == "Charge_Global"
+    assert profile.output_sheet == "Global"

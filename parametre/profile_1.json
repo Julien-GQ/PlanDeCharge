@@ -48,7 +48,8 @@
         }
     ],
     "output": {
-        "sheet_name": "Charge_Global",
+        "sheet_name": "Global",
+        "summary_sheet_name": "Charge",
         "column_order": [
             "SEMAINE",
             "DT_LIV_CONFIRMEE",
