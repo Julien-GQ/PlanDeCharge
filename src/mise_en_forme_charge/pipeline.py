@@ -665,6 +665,32 @@ def _apply_print_layout(sheet: Any) -> None:
     sheet.print_title_rows = "1:1"
 
 
+def _style_global_euro_column(sheet: Any, column_name: str = "€") -> None:
+    """Applique le style attendu a la colonne € deja incluse dans le tableau."""
+    col_idx = None
+    for idx in range(1, sheet.max_column + 1):
+        if str(sheet.cell(1, idx).value or "").strip() == column_name:
+            col_idx = idx
+            break
+
+    if col_idx is None:
+        return
+
+    letter = get_column_letter(col_idx)
+    pale_yellow = PatternFill(fill_type="solid", fgColor="FFFFF8DC")
+
+    sheet.column_dimensions[letter].width = 10
+
+    for row_idx in range(1, sheet.max_row + 1):
+        cell = sheet.cell(row_idx, col_idx)
+        if row_idx >= 2 and cell.value not in {None, ""}:
+            cell.number_format = "# ##0"
+
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.font = Font(bold=True, size=11, color="FF000000")
+        cell.fill = pale_yellow
+
+
 def _write_like_global_sheet(
     workbook: Any,
     sheet_name: str,
@@ -817,7 +843,31 @@ def _write_output(
         if old_name in workbook.sheetnames:
             del workbook[old_name]
 
-    _write_like_global_sheet(workbook, output_sheet, columns, rows, column_format, create_excel_table)
+    global_columns = list(columns)
+    global_rows = rows
+    global_column_format = dict(column_format)
+    if "€" not in global_columns:
+        global_columns.append("€")
+    global_rows = [
+        dict(row, **{"€": int(round(_parse_quantity(row.get("CAPREV_LCDE")))) if abs(_parse_quantity(row.get("CAPREV_LCDE"))) > 1e-9 else ""})
+        for row in rows
+    ]
+    global_column_format["€"] = {
+        "width": 10,
+        "align": "center",
+        "bold": True,
+        "font_size": 11,
+    }
+
+    _write_like_global_sheet(
+        workbook,
+        output_sheet,
+        global_columns,
+        global_rows,
+        global_column_format,
+        create_excel_table,
+    )
+    _style_global_euro_column(workbook[output_sheet], "€")
 
     if create_weekly_summary:
         _write_weekly_summary_sheet(workbook, summary_sheet_name, rows)
