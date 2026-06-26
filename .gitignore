@@ -21,3 +21,6 @@ htmlcov/
 
 # VS Code
 .vscode/
+
+# Donnees source locales
+base/

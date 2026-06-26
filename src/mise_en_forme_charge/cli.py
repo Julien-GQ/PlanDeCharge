@@ -3,123 +3,18 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import sys
 from pathlib import Path
-from tkinter import BOTH, Button, Tk, TclError, Text, filedialog
 
 try:
-    from .pipeline import build_v1_sheet
+    from .pipeline import build_v1_sheet, list_available_ateliers
+    from .profile_filters import format_filters_for_display
+    from .ui import ask_atelier_selection, open_generated_workbook, pick_input_file
 except ImportError:
     # Fallback when launched as a plain script: python src/.../cli.py
-    from pipeline import build_v1_sheet
-
-
-def _pick_input_file() -> Path | None:
-    root = Tk()
-    root.withdraw()
-    try:
-        selected = filedialog.askopenfilename(
-            title="Selectionner le fichier source",
-            filetypes=[
-                ("Fichiers Excel", "*.xlsm *.xlsx"),
-                ("Fichiers texte", "*.txt"),
-                ("Tous les fichiers", "*.*"),
-            ],
-        )
-    except KeyboardInterrupt:
-        selected = ""
-    finally:
-        root.destroy()
-
-    if not selected:
-        return None
-    return Path(selected)
-
-
-def _format_filters_for_display(profile_path: Path) -> str:
-    try:
-        with profile_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except Exception as exc:
-        return f"Impossible de lire le profil: {exc}"
-
-    filters = payload.get("filters", [])
-    if not isinstance(filters, list) or not filters:
-        return "Aucun filtre defini dans le profil."
-
-    op_labels = {
-        "equals": "egal a",
-        "not_equals": "different de",
-        "not_empty": "non vide",
-    }
-
-    lines = [
-        "Filtres appliques sur le tableau de base pour creer la page GLOBAL:",
-        "",
-    ]
-    for idx, rule in enumerate(filters, start=1):
-        col = str(rule.get("column", "")).strip() or "<colonne inconnue>"
-        op = str(rule.get("operator", "")).strip().lower()
-        value = str(rule.get("value", "")).strip()
-        op_label = op_labels.get(op, op)
-
-        if op == "not_empty":
-            detail = f"{idx}. {col}: {op_label}"
-        elif value != "":
-            detail = f"{idx}. {col}: {op_label} {value}"
-        else:
-            detail = f"{idx}. {col}: {op_label}"
-
-        if bool(rule.get("allow_empty", False)):
-            detail += " (valeur vide autorisee)"
-        lines.append(detail)
-
-    return "\n".join(lines)
-
-
-def _show_global_filters_window(profile_path: Path) -> None:
-    message = _format_filters_for_display(profile_path)
-
-    root = Tk()
-    root.title("Filtres page GLOBAL")
-    root.geometry("760x380")
-    root.resizable(True, True)
-
-    text = Text(root, wrap="word", font=("Segoe UI", 10))
-    text.insert("1.0", message)
-    text.configure(state="disabled")
-    text.pack(fill=BOTH, expand=True, padx=12, pady=(12, 8))
-
-    close_button = Button(root, text="Continuer", command=root.destroy)
-    close_button.pack(pady=(0, 12))
-
-    # Met la fenetre au premier plan, puis retire le mode topmost.
-    def _focus_window() -> None:
-        try:
-            root.deiconify()
-            root.lift()
-            root.attributes("-topmost", True)
-            root.focus_force()
-            root.after(300, lambda: root.attributes("-topmost", False))
-        except TclError:
-            return
-
-    root.after(50, _focus_window)
-
-    # Evite un blocage infini si la GUI n'est pas affichable sur la session.
-    root.after(30000, root.destroy)
-    root.mainloop()
-
-
-def _open_generated_workbook(path: Path) -> None:
-    if not path.exists():
-        return
-    try:
-        os.startfile(path)  # type: ignore[attr-defined]
-    except Exception:
-        print(f"Classeur genere (ouverture auto impossible): {path}")
+    from pipeline import build_v1_sheet, list_available_ateliers
+    from profile_filters import format_filters_for_display
+    from ui import ask_atelier_selection, open_generated_workbook, pick_input_file
 
 
 def _export_pdf(workbook_path: Path, pdf_output: Path | None = None) -> Path:
@@ -208,7 +103,7 @@ def main() -> None:
 
     input_path = args.input
     if input_path is None and not args.no_picker:
-        input_path = _pick_input_file()
+        input_path = pick_input_file()
         if input_path is None:
             print("Operation annulee: aucun fichier selectionne.")
             return
@@ -216,15 +111,29 @@ def main() -> None:
         raise ValueError("Fichier source requis: utiliser --input ou l'explorateur")
 
     should_show_filters = args.show_filters_window or not args.no_filters_window
+    selected_atelier = None
     if should_show_filters:
         try:
-            print("Affichage des filtres GLOBAL: fermez la fenetre pour continuer...")
-            _show_global_filters_window(args.profile)
+            print("Selection atelier GLOBAL: validez la fenetre pour continuer...")
+            selected_atelier = ask_atelier_selection(
+                list_available_ateliers(input_path),
+                args.profile,
+            )
         except Exception:
             # En environnement sans affichage, on garde un fallback console.
-            print(_format_filters_for_display(args.profile))
+            print(format_filters_for_display(args.profile))
 
-    result = build_v1_sheet(input_path, args.output, args.profile, args.sheet)
+    filter_overrides = None
+    if selected_atelier:
+        filter_overrides = {"MOR_ATELIER": selected_atelier}
+
+    result = build_v1_sheet(
+        input_path,
+        args.output,
+        args.profile,
+        args.sheet,
+        filter_overrides=filter_overrides,
+    )
     print(f"Profil utilise: {args.profile}")
     print(f"Source lue: {input_path}")
     print(f"Lignes source: {result.rows_total}")
@@ -232,7 +141,7 @@ def main() -> None:
     print(f"Fichier genere: {result.output_path}")
     print(f"Feuille generee: {result.output_sheet}")
 
-    _open_generated_workbook(result.output_path)
+    open_generated_workbook(result.output_path)
 
     if args.pdf:
         pdf_path = _export_pdf(result.output_path, args.pdf_output)
