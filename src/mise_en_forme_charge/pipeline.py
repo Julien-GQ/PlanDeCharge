@@ -428,6 +428,10 @@ def _write_retard_sheet(
         cell.border = black_border
         cell.fill = tt_fill
 
+    if tt_row >= 2:
+        _apply_banded_rows(sheet, 2, tt_row - 1, 3, 6)
+    _apply_table_gridlines(sheet, 1, tt_row, 3, 6)
+
     # Colonne de separation entre le bloc gauche et les details
     sheet.column_dimensions[get_column_letter(7)].width = 3
 
@@ -482,6 +486,11 @@ def _write_retard_sheet(
                 cell.font = Font(bold=bold, size=font_size_value)
             cell.border = black_border
 
+    if columns and details_end_row >= 2:
+        _apply_banded_rows(sheet, 2, details_end_row, details_start_col, details_end_col)
+    if columns:
+        _apply_table_gridlines(sheet, 1, details_end_row, details_start_col, details_end_col)
+
     _apply_print_layout(sheet)
 
 
@@ -527,6 +536,54 @@ def _apply_sheet_format(
                 cell.alignment = Alignment(horizontal=horizontal)
             if bold or font_size_value is not None:
                 cell.font = Font(bold=bold, size=font_size_value)
+
+
+def _apply_banded_rows(
+    sheet: Any,
+    start_row: int,
+    end_row: int,
+    start_col: int,
+    end_col: int,
+) -> None:
+    """Applique un effet une ligne sur deux sur une zone tabulaire."""
+    if end_row < start_row or end_col < start_col:
+        return
+
+    stripe_fill = PatternFill(fill_type="solid", fgColor="FFEAF2FB")
+    white_fill = PatternFill(fill_type="solid", fgColor="FFFFFFFF")
+
+    for row_idx in range(start_row, end_row + 1):
+        row_fill = stripe_fill if (row_idx - start_row) % 2 == 0 else white_fill
+        for col_idx in range(start_col, end_col + 1):
+            sheet.cell(row_idx, col_idx).fill = row_fill
+
+
+def _apply_table_gridlines(
+    sheet: Any,
+    start_row: int,
+    end_row: int,
+    start_col: int,
+    end_col: int,
+) -> None:
+    """Applique un quadrillage fin noir sur une zone tabulaire."""
+    if end_row < start_row or end_col < start_col:
+        return
+
+    black_border = Border(
+        left=Side(style="thin", color="FF000000"),
+        right=Side(style="thin", color="FF000000"),
+        top=Side(style="thin", color="FF000000"),
+        bottom=Side(style="thin", color="FF000000"),
+    )
+    for row_idx in range(start_row, end_row + 1):
+        for col_idx in range(start_col, end_col + 1):
+            sheet.cell(row_idx, col_idx).border = black_border
+
+
+def _set_uniform_row_height(sheet: Any, height: float = 18) -> None:
+    """Uniformise la hauteur de toutes les lignes utilisees d'une feuille."""
+    for row_idx in range(1, sheet.max_row + 1):
+        sheet.row_dimensions[row_idx].height = height
 
 
 def _apply_print_layout(sheet: Any) -> None:
@@ -594,6 +651,7 @@ def _write_like_global_sheet(
     create_excel_table: bool,
     navigation_targets: list[str] | None = None,
     start_col: int = 3,
+    apply_banding: bool = False,
 ) -> None:
     if sheet_name in workbook.sheetnames:
         del workbook[sheet_name]
@@ -616,6 +674,9 @@ def _write_like_global_sheet(
         )
 
     _apply_sheet_format(sheet, columns, column_format, start_col=start_col)
+    if apply_banding and sheet.max_row >= 2 and sheet.max_column >= start_col:
+        _apply_banded_rows(sheet, 2, sheet.max_row, start_col, sheet.max_column)
+        _apply_table_gridlines(sheet, 1, sheet.max_row, start_col, sheet.max_column)
     _apply_print_layout(sheet)
 
 
@@ -653,6 +714,7 @@ def _write_current_week_charge_sheets(
         column_format,
         create_excel_table,
         navigation_targets=navigation_targets,
+        apply_banding=True,
     )
     _write_like_global_sheet(
         workbook,
@@ -662,6 +724,7 @@ def _write_current_week_charge_sheets(
         column_format,
         create_excel_table,
         navigation_targets=navigation_targets,
+        apply_banding=True,
     )
     _write_like_global_sheet(
         workbook,
@@ -671,6 +734,7 @@ def _write_current_week_charge_sheets(
         column_format,
         create_excel_table,
         navigation_targets=navigation_targets,
+        apply_banding=True,
     )
 
 
@@ -759,6 +823,10 @@ def _write_output(
     
     _write_retard_sheet(workbook, "Retard", rows, columns, column_format, home_targets)
     _write_current_week_charge_sheets(workbook, columns, rows, column_format, create_excel_table, home_targets)
+
+    for sheet_name in home_targets:
+        if sheet_name in workbook.sheetnames:
+            _set_uniform_row_height(workbook[sheet_name], height=18)
 
     # Place la feuille principale generee en premier onglet pour l'affichage initial.
     if output_sheet in workbook.sheetnames:

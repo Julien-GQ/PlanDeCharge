@@ -391,7 +391,18 @@ def _write_monthly_section(sheet: Any, start_row: int, rows: list[dict[str, Any]
     for idx in range(start_col + 1, end_col + 1):
         sheet.column_dimensions[get_column_letter(idx)].width = 9
 
-    _style_grid(sheet, header_row, end_row, end_col, end_row + 1, months, (0, 0), start_col=start_col)
+    current_today = date.today()
+    current_month_key = (current_today.year, current_today.month)
+    _style_grid(
+        sheet,
+        header_row,
+        end_row,
+        end_col,
+        data_start_row,
+        months,
+        current_month_key,
+        start_col=start_col,
+    )
 
     return end_row
 
